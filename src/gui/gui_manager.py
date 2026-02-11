@@ -16,6 +16,7 @@ from src.gui.texture_manager import TextureManager
 from src.ml.face_detector import FaceDetector
 from src.ml.focus_detector import FocusDetector
 from src.ml.eye_detector import EyeOpennessDetector
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,8 @@ class GuiManager:
         self.face_detector = FaceDetector()
         self.image_analyzer = ImageAnalyzer() 
         self.image_files = [] # List of image paths
+        self.image_groups = {} # path -> group_id
+        self.group_colors = {} # group_id -> (r, g, b, a)
         self.current_index = -1
         
         # Cache
@@ -349,10 +352,20 @@ class GuiManager:
         elif key == dpg.mvKey_0: rating = 0
         
         if rating is not None:
-            MetadataManager.write_metadata(current_path, rating=rating)
-            self.update_metadata_display(current_path)
-            self.show_toast(f"Rated {rating} Stars")
-            # Auto-advance? Maybe
+             # Propagate to group
+             group_id = self.image_groups.get(current_path)
+             if group_id:
+                 affected_paths = [p for p, g in self.image_groups.items() if g == group_id]
+                 for p in affected_paths:
+                     MetadataManager.write_metadata(p, rating=rating)
+                     self.update_metadata_display(p)
+                 self.show_toast(f"Rated Group ({len(affected_paths)} images): {rating} Stars")
+             else:
+                 MetadataManager.write_metadata(current_path, rating=rating)
+                 self.update_metadata_display(current_path)
+                 self.show_toast(f"Rated {rating} Stars")
+             
+             # Auto-advance? Maybe
         
         # Flags
         label = None
@@ -361,11 +374,26 @@ class GuiManager:
         elif key == dpg.mvKey_U: label = '' # Unflag
         
         if label is not None:
-             MetadataManager.write_metadata(current_path, label=label)
-             self.update_metadata_display(current_path)
-             self.update_metadata_display(current_path)
-             self.show_toast(f"Flagged: {label}" if label else "Unflagged")
-
+             # Propagate to group
+             group_id = self.image_groups.get(current_path)
+             if group_id:
+                 affected_paths = [p for p, g in self.image_groups.items() if g == group_id]
+                 for p in affected_paths:
+                     MetadataManager.write_metadata(p, label=label)
+                     self.update_metadata_display(p) # Update UI for all
+                 self.show_toast(f"Flagged Group ({len(affected_paths)} images): {label}" if label else "Unflagged Group")
+             else:
+                 MetadataManager.write_metadata(current_path, label=label)
+                 self.update_metadata_display(current_path)
+                 self.show_toast(f"Flagged: {label}" if label else "Unflagged")
+                 
+        # Ratings 1-5 (Similar propagation)
+        # Note: I put rating logic above, let's fix it to include propagation there too.
+        # But wait, I can't easily jump back in this edit.
+        # I should have edited the whole block.
+        # Let's assume I fix rating propagation in a separate chunk or just let it be single for now? 
+        # No, user asked for "rated together". I must fix rating section too.
+        
         # Navigation
         if key == dpg.mvKey_Right or key == dpg.mvKey_Down:
             self.load_image_at_index(self.current_index + 1)
@@ -450,6 +478,14 @@ class GuiManager:
                 # Store result
                 self.analysis_results[result['path']] = result
                 
+                # Compute Groups incrementally?
+                # Better to re-compute groups periodically or just check neighbors.
+                # For simplicity, let's compute groups on the fly for the added item against previous ones?
+                # Or just re-run full grouping every few seconds? 
+                # Let's do simple greedy grouping: Compare with last processed item.
+                
+                self.update_groups(result)
+                
                 # Add to Timeline
                 self.add_thumbnail_to_timeline(result)
                 
@@ -478,42 +514,135 @@ class GuiManager:
             if self.processed_count == 0:
                 dpg.delete_item("grp_timeline_content", children_only=True)
 
-            # Create group for vertical stacking (Image + Info)
-            # Use a group for each item so we can stack text below image
-            with dpg.group(parent="grp_timeline_content", width=240): # Fixed width for scrolling calc
-                # Image Button
-                try:
-                    idx = self.image_files.index(path)
-                    # Use a unique tag for the button
-                    btn_tag = f"btn_thumb_{idx}"
-                    
-                    # Compute aspect ratio to fit within 240x240 box while maintaining ratio
-                    # thumb is already max 240x240 from analyzer, but let's be safe
-                    
-                    dpg.add_image_button(tex_tag, width=thumb.width, height=thumb.height, 
-                                         callback=lambda s, a, u: self.load_image_at_index(u), user_data=idx,
-                                         tag=btn_tag)
-                                         
-                    # Rating Indicator
-                    meta = MetadataManager.read_metadata(path)
-                    rating = meta.get('rating', 0)
-                    label = meta.get('label', '')
-                    
-                    # ASCII Rating
-                    dpg.add_text(f"R:{rating}" if rating > 0 else "", tag=f"txt_rating_{idx}", color=(255, 215, 0))
-                    
-                    # Flag Indicator & Score
-                    with dpg.group(horizontal=True):
-                        # Color code score
-                        score_color = (0, 255, 0) if score > 100 else (255, 255, 0) if score > 50 else (255, 0, 0)
-                        dpg.add_text(f"ML:{score:.0f}", color=score_color)
-                        
-                        flag_text = f"[{label.upper()}]" if label in ['Pick', 'Reject'] else ""
-                        flag_color = (0, 255, 0) if label == 'Pick' else (255, 0, 0) if label == 'Reject' else (255, 255, 255)
-                        dpg.add_text(flag_text, tag=f"txt_flag_{idx}", color=flag_color)
+            try:
+                idx = self.image_files.index(path)
+            except ValueError:
+                return
 
-                except ValueError:
-                    pass
+            # Create child window for background tinting
+            item_group_tag = f"grp_item_{idx}"
+            with dpg.child_window(parent="grp_timeline_content", width=240, height=310, tag=item_group_tag, border=False, no_scrollbar=True):
+                # Image Button
+                # Use a unique tag for the button
+                btn_tag = f"btn_thumb_{idx}"
+                
+                dpg.add_image_button(tex_tag, width=thumb.width, height=thumb.height, 
+                                     callback=lambda s, a, u: self.load_image_at_index(u), user_data=idx,
+                                     tag=btn_tag)
+                                     
+                # Rating Indicator
+                meta = MetadataManager.read_metadata(path)
+                rating = meta.get('rating', 0)
+                label = meta.get('label', '')
+                
+                # ASCII Rating
+                dpg.add_text(f"R:{rating}" if rating > 0 else "", tag=f"txt_rating_{idx}", color=(255, 215, 0))
+                
+                # Flag Indicator & Score
+                with dpg.group(horizontal=True):
+                    # Color code score
+                    score_color = (0, 255, 0) if score > 100 else (255, 255, 0) if score > 50 else (255, 0, 0)
+                    dpg.add_text(f"ML:{score:.0f}", color=score_color)
+                    
+                    flag_text = f"[{label.upper()}]" if label in ['Pick', 'Reject'] else ""
+                    flag_color = (0, 255, 0) if label == 'Pick' else (255, 0, 0) if label == 'Reject' else (255, 255, 255)
+                    dpg.add_text(flag_text, tag=f"txt_flag_{idx}", color=flag_color)
+
+                # Group Indicator (Background Tint)
+                group_id = self.image_groups.get(path)
+                if group_id:
+                    color = self.get_group_color(group_id, alpha=40)
+                    with dpg.theme() as theme_group:
+                        with dpg.theme_component(dpg.mvAll):
+                            dpg.add_theme_color(dpg.mvThemeCol_ChildBg, color, category=dpg.mvThemeCat_Core)
+                    dpg.bind_item_theme(item_group_tag, theme_group)
+
+
+    def get_group_color(self, group_id, alpha=255):
+        if group_id not in self.group_colors:
+            # Generate random pastel color
+            r = random.randint(100, 200)
+            g = random.randint(100, 200)
+            b = random.randint(100, 200)
+            self.group_colors[group_id] = (r, g, b)
+        
+        r, g, b = self.group_colors[group_id]
+        return (r, g, b, alpha)
+
+    def update_groups(self, new_result):
+        """
+        Updates grouping for the new result.
+        Greedy approach: Check if it belongs to the same group as the *immediately preceding* image in sorted list.
+        """
+        path = new_result['path']
+        try:
+            current_idx = self.image_files.index(path)
+            if current_idx == 0:
+                return # First image, start new group later if next one matches? No, wait.
+                
+            prev_path = self.image_files[current_idx - 1]
+            prev_result = self.analysis_results.get(prev_path)
+            
+            if not prev_result:
+                return
+
+            # Criteria: Time < 2s AND dHash distance < 10
+            # Time
+            t1 = os.path.getmtime(path)
+            t2 = os.path.getmtime(prev_path)
+            time_diff = abs(t1 - t2)
+            
+            # dHash
+            h1 = new_result.get('dhash')
+            h2 = prev_result.get('dhash')
+            
+            dist = 100 # High default
+            if h1 and h2:
+                # Hamming distance between hex strings
+                # Convert hex to int
+                val1 = int(h1, 16)
+                val2 = int(h2, 16)
+                # Count set bits in XOR
+                dist = bin(val1 ^ val2).count('1')
+            
+            if time_diff < 2.0 and dist < 12: # Thresholds: 2s, 12 bits
+                # Match! Join logic.
+                # If prev has group, join it. Else start new group for both.
+                group_id = self.image_groups.get(prev_path)
+                if not group_id:
+                    group_id = str(current_idx) # Create new ID
+                    self.image_groups[prev_path] = group_id
+                    # Need to update visual for prev item? Yes.
+                    # But complicating simple append logic. 
+                    # For MVP, visual update might trail.
+                    # Actually, if we add bar dynamically, we can add it to prev if missing.
+                    self.add_group_indicator(prev_path)
+                    
+                self.image_groups[path] = group_id
+            
+        except ValueError:
+            pass
+
+    def add_group_indicator(self, path):
+        # Helper to add indicator to EXISTING timeline item if it was just grouped
+        try:
+            if path in self.image_files:
+                idx = self.image_files.index(path)
+                item_group_tag = f"grp_item_{idx}"
+                
+                if dpg.does_item_exist(item_group_tag):
+                    group_id = self.image_groups.get(path)
+                    if group_id:
+                        color = self.get_group_color(group_id, alpha=40)
+                        
+                        with dpg.theme() as theme_group:
+                            with dpg.theme_component(dpg.mvAll):
+                                dpg.add_theme_color(dpg.mvThemeCol_ChildBg, color, category=dpg.mvThemeCat_Core)
+                        dpg.bind_item_theme(item_group_tag, theme_group)
+        except Exception as e:
+             logger.error(f"Error adding group indicator: {e}")
+
+    
 
     def run(self):
         dpg.show_viewport()

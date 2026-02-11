@@ -15,6 +15,32 @@ class ImageAnalyzer:
     def __init__(self):
         self.face_detector = FaceDetector()
         
+    def compute_dhash(self, image: Image.Image, hash_size: int = 8) -> str:
+        """
+        Compute dHash (Difference Hash) for an image.
+        Returns a hex string representing the 64-bit hash.
+        """
+        # Resize to (hash_size + 1, hash_size)
+        # Using 9x8 for 64 bits
+        resized = image.resize((hash_size + 1, hash_size), Image.Resampling.LANCZOS).convert("L")
+        pixels = list(resized.getdata())
+        
+        # Compare adjacent pixels
+        diff = []
+        for row in range(hash_size):
+            for col in range(hash_size):
+                left_pixel = pixels[row * (hash_size + 1) + col]
+                right_pixel = pixels[row * (hash_size + 1) + col + 1]
+                diff.append(left_pixel > right_pixel)
+                
+        # Convert binary array to hex string
+        decimal_value = 0
+        for index, value in enumerate(diff):
+            if value:
+                decimal_value += 2**index
+                
+        return hex(decimal_value)[2:]
+
     def analyze(self, image_path: str, thumbnail_size: tuple[int, int] = (240, 240)) -> dict:
         """
         Loads a preview of the image and runs ML analysis.
@@ -75,6 +101,9 @@ class ImageAnalyzer:
                 result["focus_score"] = global_sharpness
             else:
                 result["focus_score"] = max_focus
+            
+            # Compute dHash
+            result["dhash"] = self.compute_dhash(img)
             
             result["overall_score"] = result["focus_score"] 
             
