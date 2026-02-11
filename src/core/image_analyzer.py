@@ -5,6 +5,7 @@ from src.core.image_loader import ImageLoader
 from src.ml.face_detector import FaceDetector
 from src.ml.focus_detector import FocusDetector
 from src.ml.eye_detector import EyeOpennessDetector
+from src.ml.embedding_extractor import EmbeddingExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,7 @@ class ImageAnalyzer:
     """
     def __init__(self):
         self.face_detector = FaceDetector()
+        self.embedding_extractor = EmbeddingExtractor()
         
     def compute_dhash(self, image: Image.Image, hash_size: int = 8) -> str:
         """
@@ -105,7 +107,14 @@ class ImageAnalyzer:
             # Compute dHash
             result["dhash"] = self.compute_dhash(img)
             
-            result["overall_score"] = result["focus_score"] 
+            # Compute Embedding
+            embedding = self.embedding_extractor.extract(img)
+            # Store as list for JSON serialization if needed, or keep as numpy for runtime
+            # AnalysisCache uses JSON, so let's convert to list if numpy
+            if embedding is not None:
+                result["embedding"] = embedding.tolist()
+            
+            result["overall_score"] = result["focus_score"]  
             
         except Exception as e:
             logger.error(f"Error analyzing {image_path}: {e}")

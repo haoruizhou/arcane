@@ -11,7 +11,9 @@ import logging
 from src.core.image_loader import ImageLoader
 from src.core.metadata_manager import MetadataManager
 from src.core.image_analyzer import ImageAnalyzer
+from src.core.grouper import PhotoGrouper
 from src.core.analysis_cache import AnalysisCache
+import time
 from src.gui.texture_manager import TextureManager
 from src.ml.face_detector import FaceDetector
 from src.ml.focus_detector import FocusDetector
@@ -29,6 +31,8 @@ class GuiManager:
         self.image_analyzer = ImageAnalyzer() 
         self.image_files = [] # List of image paths
         self.image_groups = {} # path -> group_id
+        self.group_best_shots = {} # group_id -> path of best shot
+        self.group_second_best_shots = {} 
         self.group_colors = {} # group_id -> (r, g, b, a)
         self.current_index = -1
         
@@ -45,6 +49,7 @@ class GuiManager:
         self.processed_count = 0
         self.is_analyzing = False
         self.stop_analysis_flag = False
+        self.last_group_update_time = 0
 
         
         self.setup_dpg()
@@ -265,12 +270,19 @@ class GuiManager:
         # Update connection to Timeline
         self.update_timeline_status(path, rating, label)
 
-    def update_timeline_status(self, path, rating, label):
+    def update_timeline_status(self, path, rating=None, label=None):
         """Updates the rating/flag display on the timeline thumbnail."""
         try:
             # We need to find the index because tags depend on index now
             if path in self.image_files:
                 idx = self.image_files.index(path)
+                
+                # If rating/label not provided, read them
+                if rating is None or label is None:
+                    meta = MetadataManager.read_metadata(path)
+                    rating = meta.get('rating', 0)
+                    label = meta.get('label', '')
+
                 rating_tag = f"txt_rating_{idx}"
                 flag_tag = f"txt_flag_{idx}"
                 
@@ -282,6 +294,17 @@ class GuiManager:
                     # Only show Pick/Reject
                     text = f"[{label.upper()}]" if label in ['Pick', 'Reject'] else ""
                     color = (0, 255, 0) if label == 'Pick' else (255, 0, 0) if label == 'Reject' else (255, 255, 255)
+                    
+                    # Add grouping info
+                    group_id = self.image_groups.get(path)
+                    if group_id:
+                        if self.group_best_shots.get(group_id) == path:
+                            text += " [BEST]"
+                            color = (255, 215, 0) # Gold
+                        elif self.group_second_best_shots.get(group_id) == path:
+                            text += " [2ND]"
+                            color = (192, 192, 192) # Silver
+                            
                     dpg.set_value(flag_tag, text)
                     dpg.configure_item(flag_tag, color=color)
                 
@@ -409,6 +432,7 @@ class GuiManager:
         self.is_analyzing = True
         self.processed_count = 0
         self.analysis_results.clear()
+        self.last_group_update_time = time.time()
         
         # Reset progress components
         dpg.set_value("progress_bar", 0.0)
@@ -431,16 +455,21 @@ class GuiManager:
             try:
                 # Check cache first
                 cached_data = self.cache.get(path) if self.cache else None
+                result = None
                 
                 if cached_data:
-                    # Cache Hit
-                    # We still need to load the thumbnail for UI (it's not saved in JSON)
-                    # For speed, valid strategy: load small thumb
-                    thumb = self.image_loader.load_preview(path, max_size=(240, 240))
-                    result = cached_data
-                    result['path'] = path # Ensure path is set
-                    result['thumbnail'] = thumb
-                else:
+                    # Check if it has embedding (required for DL grouping)
+                    if 'embedding' not in cached_data:
+                        logger.info(f"Cache miss (missing embedding) for {path}")
+                        cached_data = None
+                    else:
+                        # Cache Hit
+                        thumb = self.image_loader.load_preview(path, max_size=(240, 240))
+                        result = cached_data
+                        result['path'] = path 
+                        result['thumbnail'] = thumb
+                
+                if result is None:
                     # Cache Miss - Run Analysis
                     result = self.image_analyzer.analyze(path)
                     
@@ -484,7 +513,10 @@ class GuiManager:
                 # Or just re-run full grouping every few seconds? 
                 # Let's do simple greedy grouping: Compare with last processed item.
                 
-                self.update_groups(result)
+                # Periodic Grouping check
+                if time.time() - self.last_group_update_time > 2.0:
+                    self.run_grouping_pass()
+                    self.last_group_update_time = time.time()
                 
                 # Add to Timeline
                 self.add_thumbnail_to_timeline(result)
@@ -569,64 +601,52 @@ class GuiManager:
         r, g, b = self.group_colors[group_id]
         return (r, g, b, alpha)
 
-    def update_groups(self, new_result):
-        """
-        Updates grouping for the new result.
-        Greedy approach: Check if it belongs to the same group as the *immediately preceding* image in sorted list.
-        """
-        path = new_result['path']
-        try:
-            current_idx = self.image_files.index(path)
-            if current_idx == 0:
-                return # First image, start new group later if next one matches? No, wait.
+    def run_grouping_pass(self):
+        """Runs the PhotoGrouper on currently analyzed images."""
+        analyzed_data = list(self.analysis_results.values())
+        if not analyzed_data:
+            return
+            
+        # Run Grouper
+        # Relaxed thresholds for "Scene" grouping: 30 minutes, 0.85 Cosine Sim
+        stacks = PhotoGrouper.group_similar(analyzed_data, time_threshold=1800.0, content_threshold=0.85)
+        
+        # Update Groups Dict
+        self.image_groups = {}
+        self.group_best_shots = {}
+        self.group_second_best_shots = {}
+        
+        for stack in stacks:
+            if len(stack) > 1:
+                group_id = stack[0] # Use first path as ID
                 
-            prev_path = self.image_files[current_idx - 1]
-            prev_result = self.analysis_results.get(prev_path)
-            
-            if not prev_result:
-                return
+                # Find best and second best in this stack
+                scored_images = []
+                for path in stack:
+                    self.image_groups[path] = group_id
+                    res = self.analysis_results.get(path)
+                    if res:
+                        score = res.get('overall_score', 0)
+                        scored_images.append((path, score))
+                    else:
+                        scored_images.append((path, 0))
+                
+                # Sort by score descending
+                scored_images.sort(key=lambda x: x[1], reverse=True)
+                
+                if scored_images:
+                    self.group_best_shots[group_id] = scored_images[0][0]
+                    if len(scored_images) > 1:
+                        self.group_second_best_shots[group_id] = scored_images[1][0]
 
-            # Criteria: Time < 2s AND dHash distance < 10
-            # Time
-            t1 = os.path.getmtime(path)
-            t2 = os.path.getmtime(prev_path)
-            time_diff = abs(t1 - t2)
-            
-            # dHash
-            h1 = new_result.get('dhash')
-            h2 = prev_result.get('dhash')
-            
-            dist = 100 # High default
-            if h1 and h2:
-                # Hamming distance between hex strings
-                # Convert hex to int
-                val1 = int(h1, 16)
-                val2 = int(h2, 16)
-                # Count set bits in XOR
-                dist = bin(val1 ^ val2).count('1')
-            
-            if time_diff < 2.0 and dist < 12: # Thresholds: 2s, 12 bits
-                # Match! Join logic.
-                # If prev has group, join it. Else start new group for both.
-                group_id = self.image_groups.get(prev_path)
-                if not group_id:
-                    group_id = str(current_idx) # Create new ID
-                    self.image_groups[prev_path] = group_id
-                    # Need to update visual for prev item? Yes.
-                    # But complicating simple append logic. 
-                    # For MVP, visual update might trail.
-                    # Actually, if we add bar dynamically, we can add it to prev if missing.
-                    self.add_group_indicator(prev_path)
                     
-                self.image_groups[path] = group_id
-            
-        except ValueError:
-            pass
+        # Update UI for all visible items
+        self.refresh_timeline_groups()
 
-    def add_group_indicator(self, path):
-        # Helper to add indicator to EXISTING timeline item if it was just grouped
-        try:
-            if path in self.image_files:
+    def refresh_timeline_groups(self):
+        """Updates the group indicator for all items in the timeline."""
+        for path in self.image_files:
+            try:
                 idx = self.image_files.index(path)
                 item_group_tag = f"grp_item_{idx}"
                 
@@ -634,13 +654,24 @@ class GuiManager:
                     group_id = self.image_groups.get(path)
                     if group_id:
                         color = self.get_group_color(group_id, alpha=40)
-                        
                         with dpg.theme() as theme_group:
                             with dpg.theme_component(dpg.mvAll):
                                 dpg.add_theme_color(dpg.mvThemeCol_ChildBg, color, category=dpg.mvThemeCat_Core)
                         dpg.bind_item_theme(item_group_tag, theme_group)
-        except Exception as e:
-             logger.error(f"Error adding group indicator: {e}")
+                        
+                        # Update status (covers Best/2nd shot label)
+                        self.update_timeline_status(path)
+
+                    else:
+                        # Clear theme (remove group indicator)
+                        dpg.bind_item_theme(item_group_tag, 0)
+                        
+                        # Also update status to clear any stale "BEST" labels
+                        self.update_timeline_status(path)
+                        
+            except Exception as e:
+                logger.error(f"Error refreshing timeline groups: {e}")
+
 
     
 
