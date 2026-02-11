@@ -1,6 +1,7 @@
 import os
 import torch
 import logging
+import sys
 from huggingface_hub import hf_hub_download
 from src.core.device_manager import DeviceManager
 
@@ -20,7 +21,16 @@ class ModelManager:
 
     def __init__(self):
         self.device_manager = DeviceManager()
-        self.models_dir = os.path.join(os.path.dirname(__file__), "../../models")
+        
+        # Determine models directory
+        if getattr(sys, 'frozen', False):
+            # If bundled by PyInstaller
+            base_path = sys._MEIPASS
+            self.models_dir = os.path.join(base_path, "models")
+        else:
+            # If running from source
+            self.models_dir = os.path.join(os.path.dirname(__file__), "../../models")
+            
         os.makedirs(self.models_dir, exist_ok=True)
         self.loaded_models = {}
 
