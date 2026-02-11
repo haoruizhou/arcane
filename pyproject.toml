@@ -1,0 +1,27 @@
+[project]
+name = "arcane"
+version = "0.1.0"
+description = "AI-Powered Photo Culling App using PyTorch and PySide6"
+authors = [
+    {name = "User", email = "user@example.com"},
+]
+dependencies = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "dearpygui>=1.9.0",
+    "rawpy>=0.18.0",
+    "numpy>=1.24.0",
+    "pillow>=10.0.0",
+    "huggingface_hub>=0.16.0",
+    "opencv-python-headless>=4.8.0"
+]
+requires-python = ">=3.10"
+readme = "README.md"
+license = {text = "MIT"}
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/core", "src/gui", "src/ml", "src/main.py"]

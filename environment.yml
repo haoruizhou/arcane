@@ -1,0 +1,18 @@
+name: arcane
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch
+  - torchvision
+  - numpy
+  - pillow
+  - pip:
+    - dearpygui
+    - rawpy
+    - huggingface_hub
+    - opencv-python-headless
+    - ultralytics
