@@ -15,7 +15,6 @@ dependencies:
     - rawpy
     - huggingface_hub
     - opencv-python-headless
-    - ultralytics
+    - mediapipe
     - scikit-learn
     - transformers
-    - facenet-pytorch

@@ -93,5 +93,8 @@ class AnalysisCache:
             return float(obj)
         elif isinstance(obj, np.ndarray):
             return obj.tolist()
-        else:
+        elif isinstance(obj, (str, int, float, bool, type(None))):
             return obj
+        else:
+            # Skip non-serializable objects (PIL Images, etc.)
+            return None

@@ -23,8 +23,22 @@ class SemanticAnalyzer:
         if self.model is None:
             try:
                 logger.info(f"Loading CLIP ({self.model_name})...")
-                self.model = CLIPModel.from_pretrained(self.model_name).to(self.device).eval()
-                self.processor = CLIPProcessor.from_pretrained(self.model_name)
+                # Try loading from local cache first to avoid re-downloading
+                try:
+                    self.model = CLIPModel.from_pretrained(
+                        self.model_name, local_files_only=True
+                    ).to(self.device).eval()
+                    self.processor = CLIPProcessor.from_pretrained(
+                        self.model_name, local_files_only=True
+                    )
+                except Exception:
+                    logger.info("No local CLIP cache, downloading...")
+                    self.model = CLIPModel.from_pretrained(
+                        self.model_name
+                    ).to(self.device).eval()
+                    self.processor = CLIPProcessor.from_pretrained(
+                        self.model_name
+                    )
                 logger.info("CLIP loaded.")
             except Exception as e:
                 logger.error(f"Failed to load CLIP: {e}")
@@ -43,8 +57,15 @@ class SemanticAnalyzer:
             with torch.no_grad():
                 outputs = self.model.get_image_features(**inputs)
             
+            # transformers 5.x may return BaseModelOutputWithPooling
+            if hasattr(outputs, 'image_embeds'):
+                embedding = outputs.image_embeds.cpu().numpy().flatten()
+            elif hasattr(outputs, 'cpu'):
+                embedding = outputs.cpu().numpy().flatten()
+            else:
+                embedding = outputs.pooler_output.cpu().numpy().flatten()
+            
             # Normalize
-            embedding = outputs.cpu().numpy().flatten()
             norm = np.linalg.norm(embedding)
             if norm > 0:
                 embedding = embedding / norm
@@ -54,3 +75,4 @@ class SemanticAnalyzer:
         except Exception as e:
             logger.error(f"Error extracting semantic embedding: {e}")
             return None
+

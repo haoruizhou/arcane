@@ -34,9 +34,13 @@ class ImageLoader:
     @staticmethod
     def load_preview(path: str, max_size: tuple[int, int] = (1024, 1024)) -> Image.Image:
         """
-        Extract the embedded JPEG preview from a RAW file for fast display.
-        If no preview is found, falls back to full processing (slow).
+        Extract a preview from an image file for fast display.
+        Supports RAW files (via rawpy embedded preview) and standard formats (JPEG, PNG, etc.).
         """
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Image not found: {path}")
+
+        # Try RAW processing first
         try:
             with rawpy.imread(path) as raw:
                 try:
@@ -45,19 +49,29 @@ class ImageLoader:
                     thumb = None
                 
                 if thumb and thumb.format == rawpy.ThumbFormat.JPEG:
-                    # JPEG thumbnail
                     import io
                     img = Image.open(io.BytesIO(thumb.data))
                 elif thumb and thumb.format == rawpy.ThumbFormat.BITMAP:
-                    # Bitmap thumbnail
                     img = Image.fromarray(thumb.data)
                 else:
-                    # Fallback to postprocessing if no thumbnail
-                    rgb = raw.postprocess(half_size=True) # Approx half size for speed
+                    rgb = raw.postprocess(half_size=True)
                     img = Image.fromarray(rgb)
                 
                 img.thumbnail(max_size)
                 return img
+        except rawpy.LibRawFileUnsupportedError:
+            # Not a RAW file — fall through to PIL
+            pass
+        except Exception as e:
+            logger.error(f"Failed to load RAW preview for {path}: {e}")
+            raise
+
+        # Fallback: standard image formats (JPEG, PNG, TIFF, etc.)
+        try:
+            img = Image.open(path)
+            img = img.convert("RGB")
+            img.thumbnail(max_size)
+            return img
         except Exception as e:
             logger.error(f"Failed to load preview for {path}: {e}")
             raise

@@ -553,7 +553,7 @@ class GuiManager:
 
             # Create child window for background tinting
             item_group_tag = f"grp_item_{idx}"
-            with dpg.child_window(parent="grp_timeline_content", width=240, height=310, tag=item_group_tag, border=False, no_scrollbar=True):
+            with dpg.child_window(parent="grp_timeline_content", width=240, height=310, tag=item_group_tag, border=False, no_scrollbar=True, no_scroll_with_mouse=True):
                 # Image Button
                 # Use a unique tag for the button
                 btn_tag = f"btn_thumb_{idx}"
