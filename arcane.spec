@@ -68,6 +68,6 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='arcane.app',
-    icon=None, # Add an icon path here if you have one
+    icon='logo.icns', # Add an icon path here if you have one
     bundle_identifier=None,
 )
