@@ -185,3 +185,5 @@ cython_debug/
 .arcane_cache.json
 GEMINI.md
 .DS_Store
+*.txt
+.agent/rules/env.md
