@@ -2,6 +2,10 @@ import os
 import logging
 import numpy as np
 from typing import List, Dict, Set, Tuple
+try:
+    from sklearn.cluster import DBSCAN
+except ImportError:
+    DBSCAN = None
 
 logger = logging.getLogger(__name__)
 
@@ -183,4 +187,96 @@ class PhotoGrouper:
             return bin(val1 ^ val2).count('1')
         except ValueError:
             return 100 # Max distance if invalid
+
+    @staticmethod
+    def group_by_face(images: List[Dict], eps: float = 0.6, min_samples: int = 1) -> List[List[str]]:
+        """
+        Groups images by Face Identity.
+        Returns a list of lists, where each inner list represents a person found in those photos.
+        Note: The same image may appear in multiple groups if multiple people are in it.
+        """
+        if not DBSCAN:
+            logger.error("scikit-learn not installed. Cannot group by face.")
+            return []
+            
+        # Collect all face embeddings
+        face_embeddings = []
+        face_map = [] # (image_index, detection_index)
+        
+        for img_idx, img in enumerate(images):
+            detections = img.get('detections', [])
+            for det_idx, det in enumerate(detections):
+                emb = det.get('embedding')
+                if emb is not None:
+                    face_embeddings.append(emb)
+                    face_map.append((img_idx, det_idx))
+                    
+        if not face_embeddings:
+            return []
+            
+        X = np.array(face_embeddings)
+        
+        # Cluster
+        # metric='euclidean' on normalized vectors
+        clustering = DBSCAN(eps=eps, min_samples=min_samples, metric='euclidean').fit(X)
+        labels = clustering.labels_
+        
+        # Group by label
+        clusters = {}
+        for idx, label in enumerate(labels):
+            if label == -1:
+                continue # Noise
+                
+            if label not in clusters:
+                clusters[label] = set()
+            
+            img_idx = face_map[idx][0]
+            img_path = images[img_idx]['path']
+            clusters[label].add(img_path)
+            
+        # Convert to list
+        return [list(paths) for paths in clusters.values()]
+
+    @staticmethod
+    def group_by_semantics(images: List[Dict], eps: float = 0.2, min_samples: int = 3) -> List[List[str]]:
+        """
+        Groups images by Semantic Content (using CLIP embeddings).
+        """
+        if not DBSCAN:
+            logger.error("scikit-learn not installed. Cannot group by semantics.")
+            return []
+
+        # Collect embeddings
+        embeddings = []
+        indices = []
+        
+        for idx, img in enumerate(images):
+            emb = img.get('embedding')
+            if emb is not None:
+                if isinstance(emb, list):
+                    emb = np.array(emb)
+                embeddings.append(emb)
+                indices.append(idx)
+                
+        if not embeddings:
+            return []
+            
+        X = np.array(embeddings)
+        
+        # Cluster
+        clustering = DBSCAN(eps=eps, min_samples=min_samples, metric='euclidean').fit(X)
+        labels = clustering.labels_
+        
+        clusters = {}
+        for i, label in enumerate(labels):
+            if label == -1:
+                continue
+                
+            if label not in clusters:
+                clusters[label] = []
+                
+            img_idx = indices[i]
+            clusters[label].append(images[img_idx]['path'])
+            
+        return list(clusters.values())
 

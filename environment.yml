@@ -16,3 +16,6 @@ dependencies:
     - huggingface_hub
     - opencv-python-headless
     - ultralytics
+    - scikit-learn
+    - transformers
+    - facenet-pytorch

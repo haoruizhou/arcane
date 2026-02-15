@@ -183,3 +183,4 @@ cython_debug/
 /sample_images
 /models/
 .arcane_cache.json
+GEMINI.md

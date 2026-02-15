@@ -5,7 +5,8 @@ from src.core.image_loader import ImageLoader
 from src.ml.face_detector import FaceDetector
 from src.ml.focus_detector import FocusDetector
 from src.ml.eye_detector import EyeOpennessDetector
-from src.ml.embedding_extractor import EmbeddingExtractor
+from src.ml.face_recognizer import FaceRecognizer
+from src.ml.semantic_analyzer import SemanticAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,8 @@ class ImageAnalyzer:
     """
     def __init__(self):
         self.face_detector = FaceDetector()
-        self.embedding_extractor = EmbeddingExtractor()
+        self.face_recognizer = FaceRecognizer()
+        self.semantic_analyzer = SemanticAnalyzer()
         
     def compute_dhash(self, image: Image.Image, hash_size: int = 8) -> str:
         """
@@ -90,11 +92,25 @@ class ImageAnalyzer:
                 if sharpness > max_focus:
                     max_focus = sharpness
                 
-                # Check Eyes
                 if det.get('landmarks') is not None:
                     eye_status = EyeOpennessDetector.check_eyes(img_np, det['landmarks'])
                     det['eye_status'] = eye_status
-            
+                
+                # Extract Face Embedding
+                # Crop face with some margin? FaceNet expects tight crop usually? 
+                # Let's crop exactly to box for now.
+                x1, y1, x2, y2 = map(int, box)
+                # Clamp
+                h, w = img_np.shape[:2]
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(w, x2), min(h, y2)
+                
+                if x2 > x1 and y2 > y1:
+                    face_crop = Image.fromarray(img_np[y1:y2, x1:x2])
+                    face_emb = self.face_recognizer.get_embedding(face_crop)
+                    if face_emb is not None:
+                        det['embedding'] = face_emb.tolist()
+
             result["detections"] = detections
             
             if not detections:
@@ -107,10 +123,9 @@ class ImageAnalyzer:
             # Compute dHash
             result["dhash"] = self.compute_dhash(img)
             
-            # Compute Embedding
-            embedding = self.embedding_extractor.extract(img)
-            # Store as list for JSON serialization if needed, or keep as numpy for runtime
-            # AnalysisCache uses JSON, so let's convert to list if numpy
+            # Compute Semantic Embedding (CLIP)
+            embedding = self.semantic_analyzer.get_embedding(img)
+            # Store as list for JSON serialization
             if embedding is not None:
                 result["embedding"] = embedding.tolist()
             
