@@ -10,7 +10,7 @@ class EyeOpennessDetector:
     """
     
     @staticmethod
-    def check_eyes(image_array: np.ndarray, landmarks: np.ndarray) -> str:
+    def check_eyes(image_array: np.ndarray, landmarks: np.ndarray) -> float:
         """
         Check if eyes are open based on landmarks.
         landmarks: shape (5, 2) -> [LeftEye, RightEye, Nose, LeftMouth, RightMouth]
@@ -25,23 +25,21 @@ class EyeOpennessDetector:
         or we could check simple brightness/variance in the eye crop.
         """
         if landmarks is None or len(landmarks) < 2:
-            return "Unknown"
+            return 0.0
             
         # Landmarks: 0=LeftEye, 1=RightEye
-        # Let's crop patches around the eyes and check variance (similar to focus).
-        # Closed eyes often have less high-frequency detail than open eyes (lashes+pupil+whites).
-        
         left_eye_score = EyeOpennessDetector._analyze_eye_patch(image_array, landmarks[0])
         right_eye_score = EyeOpennessDetector._analyze_eye_patch(image_array, landmarks[1])
         
-        # Heuristic threshold
-        # This is very rough.
-        avg_score = (left_eye_score + right_eye_score) / 2.0
+        # Average raw variance
+        raw_avg = (left_eye_score + right_eye_score) / 2.0
         
-        if avg_score > 50.0: # Arbitrary threshold
-            return "Open"
-        else:
-            return "Closed?"
+        # Normalize to 0-100 scale
+        # Threshold was 50.0 for "Open". 
+        # Using 150.0 as scale factor for smoother gradient
+        score = 100.0 * (1.0 - np.exp(-raw_avg / 150.0))
+        
+        return float(score)
 
     @staticmethod
     def _analyze_eye_patch(image_array: np.ndarray, point: np.ndarray, radius=15) -> float:

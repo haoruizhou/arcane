@@ -184,3 +184,4 @@ cython_debug/
 /models/
 .arcane_cache.json
 GEMINI.md
+.DS_Store

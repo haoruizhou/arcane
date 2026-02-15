@@ -88,14 +88,24 @@ class ImageAnalyzer:
                 # Check Focus
                 # Note: Focus score depends on resolution, so consistent ML size is important
                 sharpness = FocusDetector.check_face_focus(img_np, box)
+                det['sharpness_score'] = sharpness
+                # Remove legacy key if strictly needed, but let's just add new one and keep 'sharpness' for now if unsure
+                # actually let's stick to 'sharpness' but know it is 0-100 now
                 det['sharpness'] = sharpness
+                
                 if sharpness > max_focus:
                     max_focus = sharpness
                 
                 if det.get('landmarks') is not None:
-                    eye_status = EyeOpennessDetector.check_eyes(img_np, det['landmarks'])
-                    det['eye_status'] = eye_status
+                    eye_score = EyeOpennessDetector.check_eyes(img_np, det['landmarks'])
+                    det['eye_openness_score'] = eye_score
+                    # Legacy support / Interpretation
+                    det['eye_status'] = "Open" if eye_score > 50.0 else "Closed"
                 
+                # Normalize confidence to 0-100
+                if 'confidence' in det:
+                     det['confidence_score'] = det['confidence'] * 100.0
+
                 # Extract Face Embedding
                 # Crop face with some margin? FaceNet expects tight crop usually? 
                 # Let's crop exactly to box for now.

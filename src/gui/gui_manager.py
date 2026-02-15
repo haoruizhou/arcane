@@ -222,7 +222,7 @@ class GuiManager:
                     det['sharpness'] = score
                     
                     # Draw box on image (simple visualization)
-                    color = (0, 255, 0) if score > 100 else (255, 0, 0) # Green if sharp, Red if blurry (threshold TBD)
+                    color = (0, 255, 0) if score > 80 else (255, 0, 0) # Green if sharp, Red if blurry (threshold TBD)
                     x1, y1, x2, y2 = map(int, box)
                     # Draw using DPG overlay or modifying PIL image? 
                     # Modifying PIL is easier for now to show on texture
@@ -573,7 +573,7 @@ class GuiManager:
                 # Flag Indicator & Score
                 with dpg.group(horizontal=True):
                     # Color code score
-                    score_color = (0, 255, 0) if score > 100 else (255, 255, 0) if score > 50 else (255, 0, 0)
+                    score_color = (0, 255, 0) if score > 80 else (255, 255, 0) if score > 50 else (255, 0, 0)
                     dpg.add_text(f"ML:{score:.0f}", color=score_color)
                     
                     flag_text = f"[{label.upper()}]" if label in ['Pick', 'Reject'] else ""
@@ -608,8 +608,8 @@ class GuiManager:
             return
             
         # Run Grouper
-        # Relaxed thresholds for "Scene" grouping: 30 minutes, 0.85 Cosine Sim
-        stacks = PhotoGrouper.group_similar(analyzed_data, time_threshold=1800.0, content_threshold=0.85)
+        # Stricter thresholds for "Stack" grouping (Burst mode): 10 seconds, 0.90 Cosine Sim
+        stacks = PhotoGrouper.group_similar(analyzed_data, time_threshold=10.0, content_threshold=0.90)
         
         # Update Groups Dict
         self.image_groups = {}

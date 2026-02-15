@@ -24,9 +24,14 @@ class FocusDetector:
             else:
                 gray = image_array
                 
-            # Compute Laplacian
+            # Compute Laplacian variance
             laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-            return laplacian_var
+            
+            # Normalize to 0-100 scale
+            # Heuristic: 1000 is "okay" sharpness, 2000 is "sharp"
+            # Formula: 100 * (1 - exp(-variance / 1000))
+            score = 100.0 * (1.0 - np.exp(-laplacian_var / 1000.0))
+            return float(score)
             
         except Exception as e:
             logger.error(f"Error measuring sharpness: {e}")
