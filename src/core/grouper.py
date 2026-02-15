@@ -214,28 +214,38 @@ class PhotoGrouper:
         if not face_embeddings:
             return []
             
-        X = np.array(face_embeddings)
-        
-        # Cluster
-        # metric='euclidean' on normalized vectors
-        clustering = DBSCAN(eps=eps, min_samples=min_samples, metric='euclidean').fit(X)
-        labels = clustering.labels_
-        
-        # Group by label
-        clusters = {}
-        for idx, label in enumerate(labels):
-            if label == -1:
-                continue # Noise
+        try:
+            X = np.array(face_embeddings, dtype=np.float32)
+
+            # Sanity check
+            if np.any(np.isnan(X)) or np.any(np.isinf(X)):
+                logger.warning("Invalid values in face embeddings. Skipping face grouping.")
+                return []
+            
+            # Cluster
+            # metric='euclidean' on normalized vectors
+            clustering = DBSCAN(eps=eps, min_samples=min_samples, metric='euclidean', n_jobs=1).fit(X)
+            labels = clustering.labels_
+            
+            # Group by label
+            clusters = {}
+            for idx, label in enumerate(labels):
+                if label == -1:
+                    continue # Noise
+                    
+                if label not in clusters:
+                    clusters[label] = set()
                 
-            if label not in clusters:
-                clusters[label] = set()
-            
-            img_idx = face_map[idx][0]
-            img_path = images[img_idx]['path']
-            clusters[label].add(img_path)
-            
-        # Convert to list
-        return [list(paths) for paths in clusters.values()]
+                img_idx = face_map[idx][0]
+                img_path = images[img_idx]['path']
+                clusters[label].add(img_path)
+                
+            # Convert to list
+            return [list(paths) for paths in clusters.values()]
+        
+        except Exception as e:
+            logger.error(f"Error during face grouping: {e}")
+            return []
 
     @staticmethod
     def group_by_semantics(images: List[Dict], eps: float = 0.2, min_samples: int = 3) -> List[List[str]]:
@@ -261,22 +271,32 @@ class PhotoGrouper:
         if not embeddings:
             return []
             
-        X = np.array(embeddings)
-        
-        # Cluster
-        clustering = DBSCAN(eps=eps, min_samples=min_samples, metric='euclidean').fit(X)
-        labels = clustering.labels_
-        
-        clusters = {}
-        for i, label in enumerate(labels):
-            if label == -1:
-                continue
-                
-            if label not in clusters:
-                clusters[label] = []
-                
-            img_idx = indices[i]
-            clusters[label].append(images[img_idx]['path'])
+        try:
+            X = np.array(embeddings, dtype=np.float32)
             
-        return list(clusters.values())
+            # Sanity check
+            if np.any(np.isnan(X)) or np.any(np.isinf(X)):
+                logger.warning("Invalid values in embeddings (NaN/Inf). Skipping grouping.")
+                return []
+            
+            # Cluster
+            clustering = DBSCAN(eps=eps, min_samples=min_samples, metric='euclidean', n_jobs=1).fit(X)
+            labels = clustering.labels_
+            
+            clusters = {}
+            for i, label in enumerate(labels):
+                if label == -1:
+                    continue
+                    
+                if label not in clusters:
+                    clusters[label] = []
+                    
+                img_idx = indices[i]
+                clusters[label].append(images[img_idx]['path'])
+                
+            return list(clusters.values())
+            
+        except Exception as e:
+            logger.error(f"Error during semantic grouping: {e}")
+            return []
 

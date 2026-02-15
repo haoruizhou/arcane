@@ -50,6 +50,7 @@ class GuiManager:
         self.is_analyzing = False
         self.stop_analysis_flag = False
         self.last_group_update_time = 0
+        self.view_mode = "timeline"
 
         
         self.setup_dpg()
@@ -101,6 +102,14 @@ class GuiManager:
             dpg.add_text("Status:", color=(150, 150, 150))
             dpg.add_text("Idle", tag="txt_status")
             dpg.add_progress_bar(tag="progress_bar", width=200, default_value=0.0, show=False)
+            
+            dpg.add_separator()
+            dpg.add_button(label="Switch View", callback=self.toggle_view_mode)
+
+        # Scene Grid Window (Hidden by default)
+        with dpg.window(label="Scene Grid", tag="w_scene_grid", pos=(0, 730), width=1600, height=270, show=False):
+             with dpg.group(tag="grp_scene_content"):
+                 dpg.add_text("Scene View")
 
         # Gallery Window (Left)
         with dpg.window(label="Gallery", tag="w_gallery", width=300, height=600):
@@ -433,6 +442,7 @@ class GuiManager:
         self.processed_count = 0
         self.analysis_results.clear()
         self.last_group_update_time = time.time()
+        self.last_img_timestamp = 0
         
         # Reset progress components
         dpg.set_value("progress_bar", 0.0)
@@ -551,43 +561,72 @@ class GuiManager:
             except ValueError:
                 return
 
-            # Create child window for background tinting
-            item_group_tag = f"grp_item_{idx}"
-            with dpg.child_window(parent="grp_timeline_content", width=240, height=310, tag=item_group_tag, border=False, no_scrollbar=True, no_scroll_with_mouse=True):
-                # Image Button
-                # Use a unique tag for the button
-                btn_tag = f"btn_thumb_{idx}"
-                
-                dpg.add_image_button(tex_tag, width=thumb.width, height=thumb.height, 
-                                     callback=lambda s, a, u: self.load_image_at_index(u), user_data=idx,
-                                     tag=btn_tag)
-                                     
-                # Rating Indicator
-                meta = MetadataManager.read_metadata(path)
-                rating = meta.get('rating', 0)
-                label = meta.get('label', '')
-                
-                # ASCII Rating
-                dpg.add_text(f"R:{rating}" if rating > 0 else "", tag=f"txt_rating_{idx}", color=(255, 215, 0))
-                
-                # Flag Indicator & Score
-                with dpg.group(horizontal=True):
-                    # Color code score
-                    score_color = (0, 255, 0) if score > 80 else (255, 255, 0) if score > 50 else (255, 0, 0)
-                    dpg.add_text(f"ML:{score:.0f}", color=score_color)
-                    
-                    flag_text = f"[{label.upper()}]" if label in ['Pick', 'Reject'] else ""
-                    flag_color = (0, 255, 0) if label == 'Pick' else (255, 0, 0) if label == 'Reject' else (255, 255, 255)
-                    dpg.add_text(flag_text, tag=f"txt_flag_{idx}", color=flag_color)
+            # Scene Separation Logic
+            # Read timestamp
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                mtime = 0
+            
+            # Check for gap
+            if hasattr(self, 'last_img_timestamp') and self.last_img_timestamp > 0:
+                if abs(mtime - self.last_img_timestamp) > 60.0:
+                     # Add Separator
+                     with dpg.child_window(parent="grp_timeline_content", width=5, height=310, border=False):
+                         dpg.add_spacer(height=50)
+                         with dpg.theme() as theme_sep:
+                             with dpg.theme_component(dpg.mvAll):
+                                  dpg.add_theme_color(dpg.mvThemeCol_ChildBg, (100, 100, 100, 255), category=dpg.mvThemeCat_Core)
+                         
+                         # Vertical Line visualization using a thin button or just background
+                         # A thin child window with background color acts as a line
+                         dpg.bind_item_theme(dpg.last_item(), theme_sep)
 
-                # Group Indicator (Background Tint)
-                group_id = self.image_groups.get(path)
-                if group_id:
-                    color = self.get_group_color(group_id, alpha=40)
-                    with dpg.theme() as theme_group:
-                        with dpg.theme_component(dpg.mvAll):
-                            dpg.add_theme_color(dpg.mvThemeCol_ChildBg, color, category=dpg.mvThemeCat_Core)
-                    dpg.bind_item_theme(item_group_tag, theme_group)
+            self.last_img_timestamp = mtime
+
+            self.last_img_timestamp = mtime
+            
+            # Render the card
+            self._render_image_card("grp_timeline_content", path, tex_tag, thumb, score, idx, tag_suffix="")
+
+    def _render_image_card(self, parent, path, tex_tag, thumb, score, idx, tag_suffix=""):
+        """Renders a single image card with thumbnail, rating, score, and flag."""
+        item_group_tag = f"grp_item_{idx}{tag_suffix}"
+        
+        # Create child window for background tinting (card container)
+        with dpg.child_window(parent=parent, width=240, height=310, tag=item_group_tag, border=False, no_scrollbar=True, no_scroll_with_mouse=True):
+            # Image Button
+            btn_tag = f"btn_thumb_{idx}{tag_suffix}"
+            dpg.add_image_button(tex_tag, width=thumb.width, height=thumb.height, 
+                                 callback=lambda s, a, u: self.load_image_at_index(u), user_data=idx,
+                                 tag=btn_tag)
+                                 
+            # Rating Indicator
+            meta = MetadataManager.read_metadata(path)
+            rating = meta.get('rating', 0)
+            label = meta.get('label', '')
+            
+            # ASCII Rating
+            dpg.add_text(f"R:{rating}" if rating > 0 else "", tag=f"txt_rating_{idx}{tag_suffix}", color=(255, 215, 0))
+            
+            # Flag Indicator & Score
+            with dpg.group(horizontal=True):
+                # Color code score
+                score_color = (0, 255, 0) if score > 80 else (255, 255, 0) if score > 50 else (255, 0, 0)
+                dpg.add_text(f"ML:{score:.0f}", color=score_color)
+                
+                flag_text = f"[{label.upper()}]" if label in ['Pick', 'Reject'] else ""
+                flag_color = (0, 255, 0) if label == 'Pick' else (255, 0, 0) if label == 'Reject' else (255, 255, 255)
+                dpg.add_text(flag_text, tag=f"txt_flag_{idx}{tag_suffix}", color=flag_color)
+
+            # Group Indicator (Background Tint)
+            group_id = self.image_groups.get(path)
+            if group_id:
+                color = self.get_group_color(group_id, alpha=40)
+                with dpg.theme() as theme_group:
+                    with dpg.theme_component(dpg.mvAll):
+                        dpg.add_theme_color(dpg.mvThemeCol_ChildBg, color, category=dpg.mvThemeCat_Core)
+                dpg.bind_item_theme(item_group_tag, theme_group)
 
 
     def get_group_color(self, group_id, alpha=255):
@@ -675,6 +714,75 @@ class GuiManager:
 
     
 
+    # Scene View Logic
+    def toggle_view_mode(self):
+        """Switches between Timeline and Scene Grid View."""
+        if self.view_mode == "timeline":
+            self.view_mode = "scene_grid"
+            self.rebuild_scene_view()
+            dpg.configure_item("w_timeline", show=False)
+            dpg.configure_item("w_scene_grid", show=True)
+        else:
+            self.view_mode = "timeline"
+            dpg.configure_item("w_scene_grid", show=False)
+            dpg.configure_item("w_timeline", show=True)
+
+    def rebuild_scene_view(self):
+        """Groups images by semantics (CLIP) and renders the Scene Grid."""
+        dpg.delete_item("grp_scene_content", children_only=True)
+        
+        analyzed_data = list(self.analysis_results.values())
+        if not analyzed_data:
+            dpg.add_text("No analyzed images to group.", parent="grp_scene_content")
+            return
+
+        dpg.add_text("grouping by semantics...", parent="grp_scene_content")
+        
+        # Use Grouper to get semantic clusters
+        # eps=0.2 (strict) or 0.3? Default 0.2
+        semantic_scenes = PhotoGrouper.group_by_semantics(analyzed_data, eps=0.25, min_samples=2)
+        
+        # Also include unclustered images? 
+        # Grouper returns list of lists (paths)
+        
+        dpg.delete_item("grp_scene_content", children_only=True)
+        
+        if not semantic_scenes:
+             dpg.add_text("No semantic groups found.", parent="grp_scene_content")
+        
+        for i, scene_paths in enumerate(semantic_scenes):
+             if not scene_paths: continue
+             
+             # Sort by time within scene
+             # (Accessing mtime from cache or os is slow, assume list order or just sort by path)
+             scene_paths.sort() 
+             
+             with dpg.group(parent="grp_scene_content"):
+                 dpg.add_text(f"Scene {i+1} ({len(scene_paths)} photos)", color=(0, 255, 255))
+                 
+                 # Horizontal Scroll Region for this scene
+                 with dpg.child_window(height=330, border=False, horizontal_scrollbar=True): # Increased height for card
+                     with dpg.group(horizontal=True, horizontal_spacing=10) as scene_row_id:
+                         for path in scene_paths:
+                             if path in self.analysis_results:
+                                 res = self.analysis_results[path]
+                                 thumb = res.get("thumbnail")
+                                 score = res.get("overall_score", 0)
+                                 
+                                 if thumb:
+                                     # Ensure texture is loaded
+                                     tex_tag = self.texture_manager.load_texture(f"thumb_{path}", thumb)
+                                     if tex_tag:
+                                         try:
+                                             idx = self.image_files.index(path)
+                                             # Use scene_row_id as parent
+                                             self._render_image_card(scene_row_id, path, tex_tag, thumb, score, idx, tag_suffix="_scene")
+                                         except ValueError:
+                                             pass
+             
+             dpg.add_separator(parent="grp_scene_content")
+
+
     def run(self):
         dpg.show_viewport()
         while dpg.is_dearpygui_running():
@@ -684,7 +792,8 @@ class GuiManager:
             if self.toast_timer > 0:
                 self.toast_timer -= 1
                 if self.toast_timer <= 0:
-                    dpg.configure_item("w_toast", show=False)
+                     if dpg.does_item_exist("w_toast"):
+                        dpg.configure_item("w_toast", show=False)
                     
             dpg.render_dearpygui_frame()
         dpg.destroy_context()

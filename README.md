@@ -1,6 +1,6 @@
 # Arcane
 
-AI-Powered Photo Culling App for macOS (Metal) and Nvidia (CUDA).
+Deep Learning Powered Open-Source Photo Culling App for macOS (Metal) and Nvidia (CUDA).
 
 ## Features
 - **Fast RAW Loading**: Uses `rawpy` for high-fidelity image decoding.
